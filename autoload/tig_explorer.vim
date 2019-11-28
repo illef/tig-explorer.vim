@@ -123,8 +123,8 @@ function! s:initialize() abort
         \ . ' "' . s:keymap_tabedit . '"'
         \ . ' "' . s:keymap_split   . '"'
         \ . ' "' . s:keymap_vsplit  . '"'
-
-  let s:tig_prefix = 'TIGRC_USER=' . s:tmp_tigrc . ' '
+  "for fish, add env
+  let s:tig_prefix = 'env TIGRC_USER=' . s:tmp_tigrc . ' '
 endfunction
 
 function! s:exec_tig_command(tig_args) abort
