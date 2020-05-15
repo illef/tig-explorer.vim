@@ -14,7 +14,7 @@ let g:loaded_tig_explorer = 1
 let s:save_cpo = &cpoptions
 set cpoptions&vim
 
-" Public 
+" Public
 
 function! tig_explorer#open(str) abort
   :call s:exec_tig_command(a:str)
@@ -51,14 +51,18 @@ function! tig_explorer#grep(str) abort
 
   let g:tig_explorer_last_grep_keyword = word
 
-  let args = s:shellwords(word)
-  let escaped_word = ''
+  " NOTE: Escape shellwords
+  if !has('terminal')
+    let args = s:shellwords(word)
+    let escaped_word = ''
 
-  for arg in args
-    let escaped_word = join([escaped_word, shellescape(arg, 1)], ' ')
-  endfor
+    for arg in args
+      let escaped_word = join([escaped_word, shellescape(arg, 1)], ' ')
+    endfor
+    let word = escaped_word
+  endif
 
-  :call s:exec_tig_command('grep ' . escaped_word)
+  :call s:exec_tig_command('grep ' . word)
 endfunction
 
 function! tig_explorer#grep_resume() abort
@@ -70,9 +74,12 @@ function! tig_explorer#blame() abort
   call s:exec_tig_command('blame +' . line('.') . ' ' . expand('%:p'))
 endfunction
 
+function! tig_explorer#status() abort
+  call s:exec_tig_command('status')
+endfunction
 
 
-" Private 
+" Private
 
 function! s:tig_available() abort
   if !executable('tig')
@@ -127,6 +134,25 @@ function! s:initialize() abort
   let s:tig_prefix = 'env TIGRC_USER=' . s:tmp_tigrc . ' '
 endfunction
 
+function! s:tig_callback(exit_code) abort
+  if a:exit_code == 0
+    if has('nvim')
+      silent! Bclose!
+    else
+      let current_buf = bufnr('%')
+      silent! buffer #
+      " NOTE: Prevent to quit vim
+      if winnr('$') == 1 && bufnr('%') ==# current_buf
+        enew
+      endif
+    endif
+  endif
+
+  try
+    call s:open_file()
+  endtry
+endfunction
+
 function! s:exec_tig_command(tig_args) abort
   if !s:tig_available()
     return
@@ -146,18 +172,19 @@ function! s:exec_tig_command(tig_args) abort
   let command = s:tig_prefix  . 'tig' . ' ' . a:tig_args
   exec 'silent !' . s:before_exec_tig
   if has('nvim')
-    let tigCallback = { 'name': 'tig' }
-    function! tigCallback.on_exit(job_id, code, event)
-      if a:code == 0
-        silent! Bclose!
-      endif
-      try
-        call s:open_file()
-      endtry
-    endfunction
     enew
-    call termopen(command, tigCallback)
+    call termopen(command, {
+          \ 'name': 'tig',
+          \ 'on_exit': {job_id, code, event -> s:tig_callback(code)},
+          \ })
     startinsert
+  elseif has('terminal')
+    call term_start('env ' . command, {
+         \ 'term_name': 'tig',
+         \ 'curwin': v:true,
+         \ 'term_finish': 'close',
+         \ 'exit_cb': {status, code -> s:tig_callback(code)},
+         \ })
   else
     exec 'silent !' . command
     call s:open_file()
@@ -168,12 +195,20 @@ function! s:exec_tig_command(tig_args) abort
 endfunction
 
 function! s:open_file() abort
-  if filereadable(s:path_file)
+  if !filereadable(s:path_file)
+    return
+  endif
+
+  let current_dir = getcwd()
+  try
+    execute 'lcd ' . fnamemodify(s:project_root_dir(), ':p')
     for f in readfile(s:path_file)
       exec f
     endfor
+  finally
     call delete(s:path_file)
-  endif
+    execute 'lcd ' . fnamemodify(current_dir, ':p')
+  endtry
 endfunction
 
 function! s:project_root_dir() abort
