@@ -17,7 +17,7 @@ set cpoptions&vim
 " Public
 
 function! tig_explorer#open(str) abort
-  :call s:exec_tig_command(a:str)
+  :call s:exec_tig_command(s:strip_commit(a:str))
 endfunction
 
 function! tig_explorer#open_current_file() abort
@@ -52,7 +52,7 @@ function! tig_explorer#grep(str) abort
   let g:tig_explorer_last_grep_keyword = word
 
   " NOTE: Escape shellwords
-  if !has('terminal')
+  if !get(g:, 'tig_explorer_use_builtin_term', has('terminal'))
     let args = s:shellwords(word)
     let escaped_word = ''
 
@@ -71,12 +71,78 @@ function! tig_explorer#grep_resume() abort
 endfunction
 
 function! tig_explorer#blame() abort
-  call s:exec_tig_command('blame +' . line('.') . ' ' . expand('%:p'))
+  " extract the current commit if a path as the shape commit:file
+  " which happend when using TigOpenWithCommit
+  let parts = split(expand('%'), ':')
+  if len(parts) == 2
+    let commit = parts[0]
+    let file = parts[1]
+    call s:exec_tig_command('blame ' . commit .' +' . line('.') . ' -- '. file)
+  else
+    call s:exec_tig_command('blame +' . line('.') . ' ' . parts[0])
+  endif
 endfunction
 
 function! tig_explorer#status() abort
   call s:exec_tig_command('status')
 endfunction
+
+" Open a file for the given commit
+" Usefull when editing file from tree or blame view
+function! tig_explorer#open_file_with_commit(diff, mods, commit, file, lineno)
+  let commit = get(a:, 'commit', 'HEAD')
+  let file = get(a:, 'file', '')
+  let lineno = get(a:, 'lineno', 0)
+
+  let file0 = ''
+  " if no file is provided use the current one
+  if file == ''
+    let file0 = expand('%')
+    let diff = 1
+  else
+    let file0 = expand(file)
+  endif
+  " split commit file if needed
+  echomsg file0
+  let parts = split(file0, ':')
+  if len(parts) == 2
+    let commit = substitute(commit, '%',  parts[0],'' )
+    let file = parts[1]
+  else
+    let file = parts[0]
+    let commit = substitute(commit, '%', 'HEAD','')
+  endif
+  if a:diff == '!'
+    diffthis
+  endif
+  let ref = commit.":".file
+  echomsg ref
+  if bufexists(ref)
+    if a:diff == '!'
+      execute a:mods "edit" ref
+    else
+      execute a:mods "split" ref
+    endif
+  else
+    let ftype=&filetype
+    if a:diff == '!'
+      execute a:mods "new"
+    else
+      execute a:mods "enew"
+    endif
+    execute "file" ref
+    execute "r !git show ".ref
+    let &filetype=ftype
+    setlocal nomodified
+    setlocal nomodifiable
+    setlocal readonly
+    execute "+" lineno
+  endif
+  if a:diff=='!'
+    diffthis
+  endif
+endfunction
+
 
 
 " Private
@@ -178,7 +244,7 @@ function! s:exec_tig_command(tig_args) abort
           \ 'on_exit': {job_id, code, event -> s:tig_callback(code)},
           \ })
     startinsert
-  elseif has('terminal')
+  elseif get(g:, 'tig_explorer_use_builtin_term', has('terminal'))
     call term_start('env ' . command, {
          \ 'term_name': 'tig',
          \ 'curwin': v:true,
@@ -219,7 +285,7 @@ function! s:project_root_dir() abort
   endif
 
   if git_dir ==# ''
-    throw 'Not a git repository'
+    throw 'Not a git repository: ' . expand('%:p:h')
   endif
 
   let root_dir = fnamemodify(git_dir, ':h')
@@ -254,6 +320,9 @@ function! s:input(...) abort
   endtry
 endfunction
 
+function! s:strip_commit(path)
+  return substitute(a:path, '^[^:]*:','','')
+endfunction
 " Initialize
 
 " NOTE: '<sfile>' must be called top level
@@ -263,3 +332,5 @@ call s:initialize()
 
 let &cpoptions = s:save_cpo
 unlet s:save_cpo
+
+
